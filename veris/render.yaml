@@ -1,0 +1,38 @@
+# render.yaml
+# -----------
+# Render deployment blueprint for Veris.
+# Push this file to GitHub, then:
+#   1. render.com → New → Blueprint → connect repo
+#   2. Add environment variables in Render dashboard:
+#        GEMINI_API_KEY = AIza...
+#        DATA_DIR       = /data
+#        EDGAR_UA       = "Your Name your@email.com"
+#   NOTE: Render persistent disk requires a credit card.
+#   Use Railway (railway.toml) instead if you have no credit card.
+
+services:
+  - type: web
+    name: veris
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: EDGAR_UA
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: DAYS_BACK
+        value: "7"
+      - key: BROAD_MARKET
+        value: "true"
+      - key: MAX_FILINGS
+        value: "200"
+    disk:
+      name: veris-data
+      mountPath: /data
+      sizeGB: 1

@@ -1,0 +1,27 @@
+# railway.toml
+# ------------
+# Railway deployment configuration for Veris.
+# Railway reads this file automatically when you connect your GitHub repo.
+#
+# After connecting your repo in Railway dashboard, add these
+# environment variables manually:
+#
+#   GEMINI_API_KEY  = AIza...            ← from aistudio.google.com (free)
+#   DATA_DIR        = /data              ← where Railway mounts your volume
+#   EDGAR_UA        = "Your Name your@email.com"  ← SEC compliance
+#
+# Then add a Volume: Settings → Volumes → mount path /data
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[environments.production.variables]
+PYTHON_VERSION = "3.11"
+DAYS_BACK      = "7"
+BROAD_MARKET   = "true"
+MAX_FILINGS    = "200"

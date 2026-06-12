@@ -1,0 +1,18 @@
+# Web server
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Pipeline scheduler
+apscheduler==3.10.4
+
+# SEC ingestion
+requests==2.32.3
+beautifulsoup4==4.12.3
+
+# LLM classification — Gemini free tier
+google-genai==2.8.0
+
+# Market data enrichment
+yfinance==0.2.50
+
+# No other dependencies — SQLite is built into Python
