@@ -30,7 +30,7 @@ from google.genai import types
 
 from config import DB_FILE
 import radar as _radar
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """
