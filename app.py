@@ -296,6 +296,17 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(run_pipeline, trigger="cron", day_of_week="sun", hour=0, minute=0, id="weekly")
 scheduler.start()
 
+@app.on_event("startup")
+async def startup_event():
+    import threading
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM analyses WHERE status='success'").fetchone()[0]
+            if count == 0:
+                threading.Thread(target=run_pipeline, daemon=True).start()
+    except Exception:
+        threading.Thread(target=run_pipeline, daemon=True).start()
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
