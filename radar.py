@@ -26,7 +26,7 @@ from google.genai import types
 
 from config import DB_FILE
 
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # ── Radar prompt ──────────────────────────────────────────────────────────────
 # Focused purely on Item 5.02 — departure/appointment facts only.
