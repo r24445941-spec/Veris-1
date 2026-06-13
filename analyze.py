@@ -287,7 +287,7 @@ def run():
                 print(f"  ✗ Failed — {fail_reason}")
                 failed += 1
 
-            time.sleep(1)
+            time.sleep(4)
 
     print(f"\n{'=' * 60}")
     print(f"Done. {success} succeeded, {failed} failed.")
