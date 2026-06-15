@@ -303,8 +303,12 @@ async def startup_event():
         with sqlite3.connect(DB_FILE) as conn:
             count = conn.execute("SELECT COUNT(*) FROM analyses WHERE status='success'").fetchone()[0]
             if count == 0:
+                import seed as _seed
+                _seed.run()
                 threading.Thread(target=run_pipeline, daemon=True).start()
     except Exception:
+        import seed as _seed
+        _seed.run()
         threading.Thread(target=run_pipeline, daemon=True).start()
 
 
