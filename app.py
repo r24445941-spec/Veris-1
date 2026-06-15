@@ -318,7 +318,7 @@ async def startup_event():
 @app.get("/digest", response_class=HTMLResponse)
 def digest():
     """Daily digest — top filings from the last 24 hours by calibrated materiality."""
-    filings = fetch_filings(days=1, limit=50)
+    filings = fetch_filings(days=14, limit=50)
     high   = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) >= 7]
     medium = [f for f in filings if 4 <= (f.get("calibrated_materiality") or f["materiality"]) <= 6]
     low    = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) <= 3]
