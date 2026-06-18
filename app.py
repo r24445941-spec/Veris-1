@@ -1,9 +1,10 @@
+
 """
 app.py
 ------
 Veris — Corporate Filing Intelligence
 FastAPI web server.
-
+ 
 Routes:
   GET /                → daily digest (top filings last 24h)
   GET /filings         → full weekly filing feed
@@ -14,36 +15,36 @@ Routes:
   GET /api/filings     → JSON feed
   GET /api/radar       → JSON radar feed
   POST /run            → manual pipeline trigger
-
+ 
 Deploy: uvicorn app:app --host 0.0.0.0 --port $PORT
 Env:    GEMINI_API_KEY, DATA_DIR (Render persistent disk)
 """
-
+ 
 import os
 import sqlite3
 import json
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
-
+ 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from apscheduler.schedulers.background import BackgroundScheduler
-
+ 
 import ingest
 import analyze
 import enrich
 import memo
 import radar
-
+ 
 BASE_DIR = Path(__file__).parent
 from config import DB_FILE, MEMOS_DIR
-
+ 
 app = FastAPI(title="Veris")
-
+ 
 # ── Shared HTML primitives ────────────────────────────────────────────────────
 BRAND = "veris"
-
+ 
 SHARED_CSS = """
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -67,19 +68,19 @@ nav{
 .nav-links a:hover{color:var(--text)}
 .nav-links a.active{color:var(--text);border-bottom:1px solid var(--text3)}
 .nav-right{margin-left:auto;color:var(--text3);font-size:0.6rem}
-.hero{padding:2.5rem 2rem 1.5rem;border-bottom:1px solid var(--border);max-width:1100px}
-.hero-label{font-size:0.6rem;letter-spacing:0.2em;color:var(--text3);text-transform:uppercase;margin-bottom:0.75rem}
+.hero{padding:1rem 2rem 0.75rem;border-bottom:1px solid var(--border);max-width:1100px}
+.hero-label{font-size:0.6rem;letter-spacing:0.2em;color:var(--text3);text-transform:uppercase;margin-bottom:0.3rem}
 .hero-title{font-size:1.2rem;font-weight:400;color:var(--text);margin-bottom:0.4rem;letter-spacing:-0.01em}
 .hero-sub{font-size:0.72rem;color:var(--text2);line-height:1.65;max-width:60ch}
-.content{max-width:1100px;padding:0 2rem 4rem}
+.content{max-width:1100px;padding:0 2rem 1.5rem}
 .section-rule{
   font-size:0.6rem;letter-spacing:0.18em;color:var(--text3);text-transform:uppercase;
-  padding:1.5rem 0 0.75rem;border-bottom:1px solid var(--border);margin-bottom:0;
+  padding:0.75rem 0 0.4rem;border-bottom:1px solid var(--border);margin-bottom:0;
   display:flex;justify-content:space-between;align-items:baseline;
 }
 .section-rule span{color:var(--text3);font-size:0.58rem}
-.filing{padding:1.25rem 0;border-bottom:1px solid var(--border)}
-.filing-meta{display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;flex-wrap:wrap}
+.filing{padding:0.6rem 0;border-bottom:1px solid var(--border)}
+.filing-meta{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.3rem;flex-wrap:wrap}
 .meta-date{color:var(--text3);font-size:0.65rem}
 .meta-ticker{color:var(--blue);font-size:0.8rem;font-weight:500;letter-spacing:0.02em}
 .meta-ticker:hover{text-decoration:underline}
@@ -100,10 +101,10 @@ nav{
 .meta-mat strong{color:var(--text2)}
 .meta-urg{font-size:0.65rem}
 .urg-high{color:var(--dn)}.urg-medium{color:var(--amber)}.urg-low{color:var(--text3)}
-.filing-summary{font-size:0.82rem;color:var(--text2);line-height:1.65;margin-bottom:0.75rem;max-width:72ch}
+.filing-summary{font-size:0.82rem;color:var(--text2);line-height:1.5;margin-bottom:0.35rem;max-width:72ch}
 .dir{font-weight:500;margin-right:0.3rem}
 .dir.up{color:var(--up)}.dir.dn{color:var(--dn)}.dir.flat{color:var(--text3)}
-.filing-detail{display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.75rem}
+.filing-detail{display:flex;flex-direction:column;gap:0.15rem;margin-bottom:0.3rem}
 .detail-block{display:flex;gap:1rem;font-size:0.7rem;line-height:1.5;align-items:baseline}
 .detail-label{color:var(--text3);min-width:6rem;font-size:0.62rem;letter-spacing:0.08em;flex-shrink:0}
 .detail-val{color:var(--text2)}
@@ -115,13 +116,13 @@ nav{
 .filing-links a{color:var(--text3)}.filing-links a:hover{color:var(--blue)}
 .acc{color:var(--text3);font-size:0.6rem}
 footer{
-  padding:1.5rem 2rem 2rem;font-size:0.6rem;color:var(--text3);
+  padding:1rem 2rem 1.25rem;font-size:0.6rem;color:var(--text3);
   border-top:1px solid var(--border);max-width:1100px;line-height:2.2;
 }
 footer a{color:var(--text3)}.footer a:hover{color:var(--text)}
 .empty{padding:3rem 0;text-align:center;font-size:0.72rem;color:var(--text3)}
 """
-
+ 
 def nav(active: str = "") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
     def lnk(href, label):
@@ -139,27 +140,27 @@ def nav(active: str = "") -> str:
   </div>
   <div class="nav-right">{now}</div>
 </nav>"""
-
+ 
 def footer_html() -> str:
     return f"""<footer>
   <div>data: <a href="https://sec.gov">sec.gov</a> · <a href="https://bseindia.com">bseindia.com</a> · <a href="/disclaimer">disclaimer</a></div>
   <div>veris · corporate filing intelligence · not investment advice · {datetime.now().strftime("%Y-%m-%d")}</div>
 </footer>"""
-
+ 
 def fmt_ret(v):
     if v is None: return "—"
     v = float(v)
     return ("+" if v >= 0 else "") + f"{v:.2f}%"
-
+ 
 def ret_cls(v):
     if v is None: return ""
     return "up" if float(v) >= 0 else "dn"
-
+ 
 def edgar_url(f):
     cik = f["accession_no"].split("-")[0].lstrip("0")
     acc = f["accession_no"].replace("-", "")
     return f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{f['accession_no']}-index.htm"
-
+ 
 def source_url(f):
     """Return correct source URL for US (EDGAR) or IN (BSE) filings."""
     mkt = f.get("market", "US")
@@ -167,7 +168,7 @@ def source_url(f):
         scrip = f.get("scrip_code", "")
         return f"https://www.bseindia.com/corporates/ann.html?scrip={scrip}" if scrip else "https://bseindia.com"
     return edgar_url(f)
-
+ 
 URGENCY_GLYPH = {"high": "●", "medium": "◐", "low": "○"}
 EVT_CSS = {
     "cybersecurity": "evt-cybersecurity", "M&A": "evt-ma",
@@ -183,7 +184,7 @@ EVT_LABEL = {
     "regulatory": "regulatory", "dividend": "dividend",
     "share_buyback": "buyback", "restatement": "restatement", "other": "other",
 }
-
+ 
 def filing_card(f: dict) -> str:
     risks = json.loads(f["risk_flags"]) if f.get("risk_flags") else []
     impact_raw = (f.get("thesis_impact") or "neutral").split("—", 1)
@@ -199,9 +200,9 @@ def filing_card(f: dict) -> str:
     mat_cal   = f.get("calibrated_materiality") or f.get("materiality", 5)
     risk_txt  = " · ".join(risks) if risks else "no material flags"
     val       = f.get("valuation_note") or "no quantitative impact identified"
-
+ 
     market_badge = f'<span class="meta-market">{mkt}</span>'
-
+ 
     return f"""<div class="filing">
   <div class="filing-meta">
     <span class="meta-date">{f.get("file_date","")}</span>
@@ -241,7 +242,7 @@ def filing_card(f: dict) -> str:
     <span class="acc">{f.get("accession_no","")}</span>
   </div>
 </div>"""
-
+ 
 def fetch_filings(days: int = 7, limit: int = 200) -> list[dict]:
     cutoff = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     try:
@@ -257,7 +258,7 @@ def fetch_filings(days: int = 7, limit: int = 200) -> list[dict]:
             market_col = "f.market," if "market" in {
                 r[1] for r in conn.execute("PRAGMA table_info(filings)")
             } else "'US' as market,"
-
+ 
             rows = conn.execute(f"""
                 SELECT f.ticker, f.company_name, f.file_date, f.accession_no,
                        {market_col}
@@ -277,8 +278,8 @@ def fetch_filings(days: int = 7, limit: int = 200) -> list[dict]:
         return [dict(r) for r in rows]
     except Exception:
         return []
-
-
+ 
+ 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 def run_pipeline():
     print(f"\n[{datetime.now().isoformat()}] Veris pipeline started")
@@ -291,11 +292,11 @@ def run_pipeline():
     except Exception:
         print(f"[{datetime.now().isoformat()}] Pipeline FAILED:")
         traceback.print_exc()
-
+ 
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_pipeline, trigger="cron", day_of_week="sun", hour=0, minute=0, id="weekly")
 scheduler.start()
-
+ 
 @app.on_event("startup")
 async def startup_event():
     import threading
@@ -310,10 +311,10 @@ async def startup_event():
         import seed as _seed
         _seed.run()
         threading.Thread(target=run_pipeline, daemon=True).start()
-
-
+ 
+ 
 # ── Routes ────────────────────────────────────────────────────────────────────
-
+ 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/digest", response_class=HTMLResponse)
 def digest():
@@ -322,21 +323,21 @@ def digest():
     high   = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) >= 7]
     medium = [f for f in filings if 4 <= (f.get("calibrated_materiality") or f["materiality"]) <= 6]
     low    = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) <= 3]
-
+ 
     today = datetime.today().strftime("%B %d, %Y")
-
+ 
     def section(label, items, count_label):
         if not items: return ""
         cards = "".join(filing_card(f) for f in items)
         return f"""<div class="section-rule">{label}<span>{len(items)} filing{"s" if len(items)!=1 else ""}</span></div>
 {cards}"""
-
+ 
     body = (
         section("High priority — materiality ≥ 0.70", high, "high") +
         section("Standard review — materiality 0.40–0.69", medium, "medium") +
         section("Routine — materiality < 0.40", low, "low")
     ) or '<div class="empty">No filings in the last 24 hours. Pipeline runs weekly — check back Sunday.</div>'
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -365,8 +366,8 @@ def digest():
 </div>
 {footer_html()}
 </body></html>""")
-
-
+ 
+ 
 @app.get("/filings", response_class=HTMLResponse)
 def filings_page():
     """Full weekly filing feed — last 7 days."""
@@ -375,19 +376,19 @@ def filings_page():
     medium = [f for f in filings if 4 <= (f.get("calibrated_materiality") or f["materiality"]) <= 6]
     low    = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) <= 3]
     week   = datetime.today().strftime("Week of %B %d, %Y")
-
+ 
     def section(label, items):
         if not items: return ""
         cards = "".join(filing_card(f) for f in items)
         return f"""<div class="section-rule">{label}<span>{len(items)} filing{"s" if len(items)!=1 else ""}</span></div>
 {cards}"""
-
+ 
     body = (
         section("High priority — materiality ≥ 0.70", high) +
         section("Standard review — materiality 0.40–0.69", medium) +
         section("Routine — materiality < 0.40", low)
     ) or '<div class="empty">No filings this week. Run the pipeline first.</div>'
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -409,8 +410,8 @@ def filings_page():
 <div class="content">{body}</div>
 {footer_html()}
 </body></html>""")
-
-
+ 
+ 
 @app.get("/disclaimer", response_class=HTMLResponse)
 def disclaimer():
     """Standalone disclaimer page."""
@@ -445,7 +446,7 @@ def disclaimer():
   <p class="hero-sub">Read this before using Veris for any purpose beyond curiosity.</p>
 </div>
 <div class="disc-body">
-
+ 
   <div class="notice-box">
     <p>
       <strong>Veris is a research and educational tool only.</strong>
@@ -454,7 +455,7 @@ def disclaimer():
       You proceed entirely at your own risk.
     </p>
   </div>
-
+ 
   <h2>What Veris does</h2>
   <p>
     Veris collects publicly available corporate disclosure filings from
@@ -464,7 +465,7 @@ def disclaimer():
     classify event types, and assign materiality scores.
     These outputs are machine-generated and uncorrected unless otherwise stated.
   </p>
-
+ 
   <h2>The primary source is always the original filing</h2>
   <p>
     Every filing page on Veris links directly to the source document on EDGAR or BSE.
@@ -477,7 +478,7 @@ def disclaimer():
     Older filings, scanned exhibits, and complex XBRL documents may produce
     incomplete or inaccurate summaries. Always cross-check.
   </p>
-
+ 
   <h2>Materiality scores are estimates</h2>
   <p>
     The materiality score (0.00–1.00) is a raw model estimate, subsequently adjusted
@@ -485,7 +486,7 @@ def disclaimer():
     It reflects signal strength for research triage — not legal materiality
     as defined by securities law. Do not use it as a compliance determination.
   </p>
-
+ 
   <h2>Executive Radar — source-linked facts only</h2>
   <p>
     The Executive Movement Radar extracts structured facts from Item 5.02
@@ -493,7 +494,7 @@ def disclaimer():
     Each claim is paired with the exact sentence from the filing that supports it.
     Where evidence cannot be located, facts are not published.
   </p>
-
+ 
   <h2>Not real-time. Not comprehensive.</h2>
   <p>
     Veris runs on a weekly pipeline. Data is not live and does not constitute
@@ -501,7 +502,7 @@ def disclaimer():
     of U.S. and Indian equities. It does not claim to cover all listed companies
     or all filing types.
   </p>
-
+ 
   <h2>No liability</h2>
   <p>
     The authors of Veris accept no liability for losses, damages, or decisions
@@ -509,9 +510,9 @@ def disclaimer():
     their associated price reactions are historical data — they do not predict
     future performance.
   </p>
-
+ 
   <div class="disc-rule"></div>
-
+ 
   <h2>Data sources</h2>
   <p>
     United States: <a href="https://sec.gov" target="_blank">SEC EDGAR</a>
@@ -520,18 +521,18 @@ def disclaimer():
     — public corporate announcements feed.<br>
     Market data: Yahoo Finance (via yfinance) — for educational price reaction analysis only.
   </p>
-
+ 
   <h2>Contact</h2>
   <p>
     Questions or corrections? This is a student research project.
     Data inaccuracies should be verified against the primary EDGAR or BSE source document.
   </p>
-
+ 
 </div>
 {footer_html()}
 </body></html>""")
-
-
+ 
+ 
 @app.get("/radar/executives", response_class=HTMLResponse)
 def exec_radar():
     """Executive Movement Radar — structured Item 5.02 fact table."""
@@ -550,16 +551,16 @@ def exec_radar():
             """).fetchall() if "executive_radar" in tables else []
     except Exception:
         rows = []
-
+ 
     events = []
     for row in rows:
         r = dict(row)
         r["departures"]   = json.loads(r["departures"])   if r["departures"]   else []
         r["appointments"] = json.loads(r["appointments"]) if r["appointments"] else []
         events.append(r)
-
+ 
     now = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
-
+ 
     def dep_rows(e):
         out = ""
         for d in e["departures"]:
@@ -587,7 +588,7 @@ def exec_radar():
   <td class="cell-evidence">{a.get("evidence","—")}</td>
 </tr>"""
         return out or '<tr><td colspan="7" class="no-data">No structured facts extracted</td></tr>'
-
+ 
     blocks = ""
     for e in events:
         suc = f'<div class="succession">⟶ {e["succession_note"]}</div>' if e.get("succession_note") else ""
@@ -603,10 +604,10 @@ def exec_radar():
     <th>Voluntary / Origin</th><th>Effective</th><th>Source Evidence</th>
   </tr></thead><tbody>{dep_rows(e)}</tbody></table>
 </div>"""
-
+ 
     if not events:
         blocks = '<div class="empty">No executive movement events found. Run the pipeline first.</div>'
-
+ 
     radar_css = """
 .event-block{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border)}
 .event-hd{display:flex;align-items:center;gap:1rem;margin-bottom:0.6rem}
@@ -629,7 +630,7 @@ def exec_radar():
 .cell-evidence{color:var(--text3);font-style:italic;font-size:0.65rem;max-width:28rem;line-height:1.55}
 .no-data{color:var(--text3);font-style:italic;text-align:center;padding:1rem}
 """
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -658,14 +659,14 @@ def exec_radar():
 </div>
 {footer_html()}
 </body></html>""")
-
-
-
+ 
+ 
+ 
 @app.get("/filing/{accession_no}", response_class=HTMLResponse)
 def filing_page(accession_no: str):
     """Individual filing detail page with JSON/MD/Text download links."""
     acc_norm = accession_no
-
+ 
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
@@ -683,7 +684,7 @@ def filing_page(accession_no: str):
             """, (acc_norm,)).fetchone()
     except Exception as e:
         return HTMLResponse(f"<pre>DB error: {e}</pre>", status_code=500)
-
+ 
     if not row:
         return HTMLResponse(f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Veris · Not Found</title>
@@ -693,7 +694,7 @@ def filing_page(accession_no: str):
 <div class="hero"><h1 class="hero-title">Filing not found</h1>
 <p class="hero-sub">{acc_norm}</p></div>
 {footer_html()}</body></html>""", status_code=404)
-
+ 
     f = dict(row)
     mkt       = f.get("market", "US")
     url       = source_url(f)
@@ -704,10 +705,10 @@ def filing_page(accession_no: str):
     direction = (f.get("thesis_impact") or "neutral").split("—")[0].strip().lower()
     dir_glyph = {"bullish":"▲","bearish":"▼","neutral":"—"}.get(direction,"—")
     dir_cls   = {"bullish":"up","bearish":"dn","neutral":"flat"}.get(direction,"flat")
-
+ 
     # Machine-readable links
     api_base = f"/filing/{acc_norm}"
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -774,7 +775,7 @@ def filing_page(accession_no: str):
         </div>
       </div>
     </div>
-
+ 
     <div class="detail-sidebar">
       <div class="sidebar-box">
         <div class="sidebar-box-title">Filing metadata</div>
@@ -787,7 +788,7 @@ def filing_page(accession_no: str):
         <div class="fact-row"><span class="fact-key">urgency</span><span class="fact-val meta-urg urg-{urg}">{URGENCY_GLYPH.get(urg,"○")} {urg}</span></div>
         <div class="fact-row"><span class="fact-key">analyzed</span><span class="fact-val">{(f.get("analyzed_at") or "")[:16]}</span></div>
       </div>
-
+ 
       <div class="sidebar-box">
         <div class="sidebar-box-title">Machine-readable</div>
         <a class="dl-link" href="{api_base}/json">JSON ↗</a>
@@ -800,8 +801,8 @@ def filing_page(accession_no: str):
 </div>
 {footer_html()}
 </body></html>""")
-
-
+ 
+ 
 @app.get("/filing/{accession_no}/json")
 def filing_json(accession_no: str):
     """JSON representation of a single filing."""
@@ -831,8 +832,8 @@ def filing_json(accession_no: str):
     f["source_url"]  = source_url(f)
     f["filing_page"] = f"/filing/{acc_norm}"
     return JSONResponse(f)
-
-
+ 
+ 
 @app.get("/filing/{accession_no}/md")
 def filing_markdown(accession_no: str):
     """Markdown representation of a single filing."""
@@ -859,35 +860,35 @@ def filing_markdown(accession_no: str):
     f  = dict(row)
     rs = json.loads(f["risk_flags"]) if f.get("risk_flags") else []
     md = f"""# {f["company_name"]} ({f["ticker"]}) — {EVT_LABEL.get(f["event_type"],"other")}
-
+ 
 **Accession:** {acc_norm}  
 **Filed:** {f["file_date"]}  
 **Market:** {f.get("market","US")}  
 **Materiality:** {(f.get("calibrated_materiality") or f.get("materiality",5))/10:.2f}  
 **Urgency:** {f.get("urgency","").upper()}  
-
+ 
 ## Summary
 {f.get("summary","—")}
-
+ 
 ## Thesis Impact
 {f.get("thesis_impact","—")}
-
+ 
 ## Valuation Note
 {f.get("valuation_note","—")}
-
+ 
 ## Risk Flags
 {chr(10).join(f"- {r}" for r in rs) if rs else "None identified"}
-
+ 
 ## Price Reaction
 1D: {fmt_ret(f.get("return_1d"))} | 5D: {fmt_ret(f.get("return_5d"))}
-
+ 
 ---
 *Source: {source_url(f)}*  
 *Generated by Veris · Not investment advice*
 """
     return Response(md, media_type="text/markdown")
-
-
+ 
+ 
 @app.get("/filing/{accession_no}/txt")
 def filing_text(accession_no: str):
     """Plain text of the raw filing."""
@@ -906,9 +907,9 @@ def filing_text(accession_no: str):
         f"{row[1]} ({row[2]}) — {acc_norm}\n\n{row[0] or '[No text available]'}",
         media_type="text/plain"
     )
-
-
-
+ 
+ 
+ 
 @app.get("/events/{event_type}", response_class=HTMLResponse)
 def event_page(event_type: str):
     """Event landing page — all recent filings of one event type."""
@@ -926,9 +927,9 @@ def event_page(event_type: str):
     db_event = slug_map.get(event_type.lower())
     if not db_event:
         return HTMLResponse("Unknown event type", status_code=404)
-
+ 
     evt_display = EVT_LABEL.get(db_event, db_event)
-
+ 
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
@@ -939,7 +940,7 @@ def event_page(event_type: str):
                          if "price_reactions" in tables else ""
             price_cols = "p.return_1d, p.return_5d," \
                          if "price_reactions" in tables else "NULL as return_1d, NULL as return_5d,"
-
+ 
             rows = conn.execute(f"""
                 SELECT f.ticker, f.company_name, f.file_date, f.accession_no,
                        COALESCE(f.market,'US') AS market, f.scrip_code,
@@ -957,11 +958,11 @@ def event_page(event_type: str):
             """, (db_event,)).fetchall()
     except Exception as e:
         rows = []
-
+ 
     filings = [dict(r) for r in rows]
     cards   = "".join(filing_card(f) for f in filings)
     count   = len(filings)
-
+ 
     # Event nav links
     event_nav_items = [
         ("cyber","Cyber"),("earnings","Earnings"),("ma","M&A"),
@@ -973,7 +974,7 @@ def event_page(event_type: str):
         f'<a href="/events/{slug}" style="color:{'var(--text)' if slug == event_type.lower() else 'var(--text3)'}">{label}</a>'
         for slug, label in event_nav_items
     )
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -995,13 +996,13 @@ def event_page(event_type: str):
 </div>
 {footer_html()}
 </body></html>""")
-
-
+ 
+ 
 @app.get("/ticker/{ticker_symbol}", response_class=HTMLResponse)
 def ticker_page(ticker_symbol: str):
     """All filings for a single company in reverse chronological order."""
     ticker_upper = ticker_symbol.upper()
-
+ 
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
@@ -1010,7 +1011,7 @@ def ticker_page(ticker_symbol: str):
                 "SELECT company_name, market, scrip_code FROM filings WHERE ticker = ? LIMIT 1",
                 (ticker_upper,)
             ).fetchone()
-
+ 
             if not meta:
                 return HTMLResponse(f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Veris · {ticker_upper}</title>
@@ -1023,16 +1024,16 @@ def ticker_page(ticker_symbol: str):
   <p class="hero-sub">No filings found for this ticker. Run the pipeline first.</p>
 </div>
 {footer_html()}</body></html>""", status_code=404)
-
+ 
             company_name = meta["company_name"]
             market       = meta["market"] or "US"
-
+ 
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
             price_join = "LEFT JOIN price_reactions p ON f.id = p.filing_id"                          if "price_reactions" in tables else ""
             price_cols = "p.return_1d, p.return_5d,"                          if "price_reactions" in tables else "NULL as return_1d, NULL as return_5d,"
-
+ 
             rows = conn.execute(f"""
                 SELECT f.ticker, f.company_name, f.file_date, f.accession_no,
                        COALESCE(f.market,'US') AS market, f.scrip_code,
@@ -1049,13 +1050,13 @@ def ticker_page(ticker_symbol: str):
                 ORDER BY f.file_date DESC
                 LIMIT 100
             """, (ticker_upper,)).fetchall()
-
+ 
     except Exception as e:
         return HTMLResponse(f"<pre>Error: {e}</pre>", status_code=500)
-
+ 
     filings = [dict(r) for r in rows]
     cards   = "".join(filing_card(f) for f in filings)
-
+ 
     # Simple stats
     total     = len(filings)
     avg_mat   = sum((f.get("calibrated_materiality") or f["materiality"]) for f in filings) / total if total else 0
@@ -1065,14 +1066,14 @@ def ticker_page(ticker_symbol: str):
         evt = EVT_LABEL.get(f["event_type"], f["event_type"])
         event_cts[evt] = event_cts.get(evt, 0) + 1
     top_events = sorted(event_cts.items(), key=lambda x: x[1], reverse=True)[:4]
-
+ 
     stats_row = " &nbsp;·&nbsp; ".join(
         f'<span style="color:var(--text)">{n}</span> {e}'
         for e, n in top_events
     )
-
+ 
     market_badge = f'<span style="font-size:0.65rem;padding:0.1rem 0.4rem;border-radius:2px;background:#0d1a2a;color:#58a6ff;border:1px solid #1e2d45;margin-left:0.5rem">{market}</span>'
-
+ 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1108,8 +1109,8 @@ def ticker_page(ticker_symbol: str):
 {footer_html()}
 </body>
 </html>""")
-
-
+ 
+ 
 @app.get("/health")
 def health():
     try:
@@ -1134,8 +1135,8 @@ def health():
         "latest_memo": latest_memo,
         "next_run":    str(scheduler.get_job("weekly").next_run_time),
     })
-
-
+ 
+ 
 @app.get("/api/filings")
 def api_filings(days: int = 7, limit: int = 50):
     filings = fetch_filings(days=days, limit=limit)
@@ -1149,8 +1150,8 @@ def api_filings(days: int = 7, limit: int = 50):
         "count":     len(filings),
         "filings":   filings,
     })
-
-
+ 
+ 
 @app.get("/api/radar")
 def api_radar():
     try:
@@ -1180,14 +1181,14 @@ def api_radar():
         "count":     len(events),
         "events":    events,
     })
-
-
+ 
+ 
 @app.post("/run")
 def trigger_pipeline():
     run_pipeline()
     return JSONResponse({"status": "triggered", "timestamp": datetime.now().isoformat()})
-
-
+ 
+ 
 def _loading_page() -> str:
     return """<!DOCTYPE html>
 <html lang="en">
