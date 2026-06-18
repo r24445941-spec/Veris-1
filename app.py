@@ -1,4 +1,4 @@
- """
+"""
 app.py
 ------
 Veris — Corporate Filing Intelligence
@@ -67,19 +67,19 @@ nav{
 .nav-links a:hover{color:var(--text)}
 .nav-links a.active{color:var(--text);border-bottom:1px solid var(--text3)}
 .nav-right{margin-left:auto;color:var(--text3);font-size:0.6rem}
-.hero{padding:1rem 2rem 0.75rem;border-bottom:1px solid var(--border);max-width:1100px}
-.hero-label{font-size:0.6rem;letter-spacing:0.2em;color:var(--text3);text-transform:uppercase;margin-bottom:0.3rem}
+.hero{padding:2.5rem 2rem 1.5rem;border-bottom:1px solid var(--border);max-width:1100px}
+.hero-label{font-size:0.6rem;letter-spacing:0.2em;color:var(--text3);text-transform:uppercase;margin-bottom:0.75rem}
 .hero-title{font-size:1.2rem;font-weight:400;color:var(--text);margin-bottom:0.4rem;letter-spacing:-0.01em}
 .hero-sub{font-size:0.72rem;color:var(--text2);line-height:1.65;max-width:60ch}
-.content{max-width:1100px;padding:0 2rem 1.5rem}
+.content{max-width:1100px;padding:0 2rem 4rem}
 .section-rule{
   font-size:0.6rem;letter-spacing:0.18em;color:var(--text3);text-transform:uppercase;
-  padding:0.75rem 0 0.4rem;border-bottom:1px solid var(--border);margin-bottom:0;
+  padding:1.5rem 0 0.75rem;border-bottom:1px solid var(--border);margin-bottom:0;
   display:flex;justify-content:space-between;align-items:baseline;
 }
 .section-rule span{color:var(--text3);font-size:0.58rem}
-.filing{padding:0.6rem 0;border-bottom:1px solid var(--border)}
-.filing-meta{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.3rem;flex-wrap:wrap}
+.filing{padding:1.25rem 0;border-bottom:1px solid var(--border)}
+.filing-meta{display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;flex-wrap:wrap}
 .meta-date{color:var(--text3);font-size:0.65rem}
 .meta-ticker{color:var(--blue);font-size:0.8rem;font-weight:500;letter-spacing:0.02em}
 .meta-ticker:hover{text-decoration:underline}
@@ -100,10 +100,10 @@ nav{
 .meta-mat strong{color:var(--text2)}
 .meta-urg{font-size:0.65rem}
 .urg-high{color:var(--dn)}.urg-medium{color:var(--amber)}.urg-low{color:var(--text3)}
-.filing-summary{font-size:0.82rem;color:var(--text2);line-height:1.5;margin-bottom:0.35rem;max-width:72ch}
+.filing-summary{font-size:0.82rem;color:var(--text2);line-height:1.65;margin-bottom:0.75rem;max-width:72ch}
 .dir{font-weight:500;margin-right:0.3rem}
 .dir.up{color:var(--up)}.dir.dn{color:var(--dn)}.dir.flat{color:var(--text3)}
-.filing-detail{display:flex;flex-direction:column;gap:0.15rem;margin-bottom:0.3rem}
+.filing-detail{display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.75rem}
 .detail-block{display:flex;gap:1rem;font-size:0.7rem;line-height:1.5;align-items:baseline}
 .detail-label{color:var(--text3);min-width:6rem;font-size:0.62rem;letter-spacing:0.08em;flex-shrink:0}
 .detail-val{color:var(--text2)}
@@ -115,7 +115,7 @@ nav{
 .filing-links a{color:var(--text3)}.filing-links a:hover{color:var(--blue)}
 .acc{color:var(--text3);font-size:0.6rem}
 footer{
-  padding:1rem 2rem 1.25rem;font-size:0.6rem;color:var(--text3);
+  padding:1.5rem 2rem 2rem;font-size:0.6rem;color:var(--text3);
   border-top:1px solid var(--border);max-width:1100px;line-height:2.2;
 }
 footer a{color:var(--text3)}.footer a:hover{color:var(--text)}
@@ -296,32 +296,19 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(run_pipeline, trigger="cron", day_of_week="sun", hour=0, minute=0, id="weekly")
 scheduler.start()
 
-
 @app.on_event("startup")
 async def startup_event():
-    """
-    On first boot, if analyses table is empty, run the full pipeline
-    in a background thread. No console needed.
-    """
     import threading
     try:
         with sqlite3.connect(DB_FILE) as conn:
-            tables = {r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )}
-            if "analyses" not in tables:
-                analyzed = 0
-            else:
-                analyzed = conn.execute(
-                    "SELECT COUNT(*) FROM analyses WHERE status='success'"
-                ).fetchone()[0]
-        if analyzed == 0:
-            print("[startup] No analyzed filings found — triggering pipeline...")
-            threading.Thread(target=run_pipeline, daemon=True).start()
-        else:
-            print(f"[startup] {analyzed} analyzed filings found — skipping auto-run.")
-    except Exception as e:
-        print(f"[startup] Error checking DB: {e} — triggering pipeline anyway...")
+            count = conn.execute("SELECT COUNT(*) FROM analyses WHERE status='success'").fetchone()[0]
+            if count == 0:
+                import seed as _seed
+                _seed.run()
+                threading.Thread(target=run_pipeline, daemon=True).start()
+    except Exception:
+        import seed as _seed
+        _seed.run()
         threading.Thread(target=run_pipeline, daemon=True).start()
 
 
@@ -331,7 +318,7 @@ async def startup_event():
 @app.get("/digest", response_class=HTMLResponse)
 def digest():
     """Daily digest — top filings from the last 24 hours by calibrated materiality."""
-    filings = fetch_filings(days=1, limit=50)
+    filings = fetch_filings(days=14, limit=50)
     high   = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) >= 7]
     medium = [f for f in filings if 4 <= (f.get("calibrated_materiality") or f["materiality"]) <= 6]
     low    = [f for f in filings if (f.get("calibrated_materiality") or f["materiality"]) <= 3]
@@ -1196,10 +1183,7 @@ def api_radar():
 
 
 @app.post("/run")
-def trigger_pipeline(secret: str = ""):
-    expected = os.environ.get("PIPELINE_SECRET", "")
-    if expected and secret != expected:
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+def trigger_pipeline():
     run_pipeline()
     return JSONResponse({"status": "triggered", "timestamp": datetime.now().isoformat()})
 
